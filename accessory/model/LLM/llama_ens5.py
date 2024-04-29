@@ -282,7 +282,7 @@ class Transformer(nn.Module):
 
             print("build llama model with qformerv2")
             if self.args.load_pretrained_visual_encoder:
-                self.qformer = Blip2Model.from_pretrained(
+                self.qformer = Blip2Model.from_pretrained(  # QFormer来自BLIP-2
                     "Salesforce/blip2-opt-2.7b", torch_dtype=self.norm.weight.dtype
                 )
             else:
@@ -374,7 +374,7 @@ class Transformer(nn.Module):
 
         return x
 
-    def encode_image(self, image):
+    def encode_image(self, image):  # get visual feature..
         # [B, 32, 768]
         self.clip.eval()
         self.openclip_convnext_xxl.eval()
@@ -461,17 +461,18 @@ class Transformer(nn.Module):
     def forward(self, examples, image=None):
         self._destroy_kv_cache()  # training always disables kv cache
         _bsz, seqlen = examples.shape
-        h = self.tok_embeddings(examples)
+        h = self.tok_embeddings(examples)  # 文字token?
         self.freqs_cis = self.freqs_cis.to(h.device)
 
         image_words = 0
         if image is not None:
-            h_bos, h_caption = h[:, :1], h[:, 1:]
-            l_image_tokens: List = self.encode_image(image)
-            for i, image_tokens in enumerate(l_image_tokens):
+            h_bos, h_caption = h[:, :1], h[:, 1:]  # bos: beginning of sequence? h_caption是剩余文本?
+            l_image_tokens: List = self.encode_image(image)  # 视觉编码, QFormer, CLIP-ConvNeXt, DINOv2, CLIP...
+            for i, image_tokens in enumerate(l_image_tokens):  
+                # 对每一种image token的前后都进行特殊标记
                 image_tokens = torch.cat((self.start_img.expand(_bsz, -1, -1),
                                           image_tokens,
-                                          self.end_img.expand(_bsz, -1, -1)), dim=1)
+                                          self.end_img.expand(_bsz, -1, -1)), dim=1)  # start_img和end_img应该是特殊标记
                 l_image_tokens[i] = image_tokens
             image_tokens = torch.cat(l_image_tokens, dim=1)
             image_words = image_tokens.shape[1]
@@ -480,7 +481,7 @@ class Transformer(nn.Module):
             seqlen = h.shape[1]
 
         freqs_cis = self.freqs_cis[:seqlen]
-        for layer in self.layers:
+        for layer in self.layers:  # 这里应该就是LLM层了
             h = layer(h, start_pos=0, freqs_cis=freqs_cis, mask="causal")
         h = self.norm(h)
         output = self.output(h[:, image_words:, :])
